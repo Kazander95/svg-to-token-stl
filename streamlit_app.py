@@ -164,10 +164,10 @@ def render_preview(
     art_margin = disc_radius * art_margin_frac
     inner_safe = max(disc_radius - border_width - art_margin, 1e-6)
 
-    # Disc outline.
-    ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="white", edgecolor="black", linewidth=1))
-    # Border ring (visual).
-    ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="none", edgecolor="black", linewidth=3))
+    # Outer black disc (draws the filled border ring when the inner white disc
+    # is drawn on top).
+    ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="black", edgecolor="black", linewidth=1))
+    # Inner white face (covers the center, leaving the annular border black).
     ax_token.add_patch(Circle((0, 0), disc_radius - border_width, facecolor="white", edgecolor="black", linewidth=0.5))
 
     # Fit cropped art into the safe inner area and plot it.
