@@ -15,8 +15,10 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import streamlit as st
 from matplotlib.patches import Circle
+from PIL import Image
 from shapely import affinity
 from shapely.geometry import MultiPolygon, Polygon, box
+from streamlit_cropper import st_cropper
 
 from main import (
     DEFAULT_ART_MARGIN_FRAC,
@@ -53,6 +55,76 @@ def _plot_polygon(ax, geom, **kwargs):
         for interior in poly.interiors:
             ixs, iys = interior.xy
             ax.fill(ixs, iys, color="white", zorder=kwargs.get("zorder", 1) + 0.1)
+
+
+def render_art_to_image(art, image_size: int = 600, padding: float = 0.05):
+    """Rasterize the shapely art to a PIL image.
+
+    Returns (image, transform) where `transform` lets callers convert pixel
+    coordinates from the rendered image back into original art-space
+    coordinates.
+    """
+    minx, miny, maxx, maxy = art.bounds
+    width = maxx - minx
+    height = maxy - miny
+    extent = max(width, height)
+    pad = extent * padding
+
+    # Square world window centered on the art, sized to the longer side + pad.
+    cx = (minx + maxx) / 2.0
+    cy = (miny + maxy) / 2.0
+    half = extent / 2.0 + pad
+    world_left = cx - half
+    world_right = cx + half
+    world_bottom = cy - half
+    world_top = cy + half
+
+    fig, ax = plt.subplots(figsize=(6, 6), dpi=image_size / 6)
+    _plot_polygon(ax, art, color="black")
+    ax.set_xlim(world_left, world_right)
+    ax.set_ylim(world_bottom, world_top)
+    ax.set_aspect("equal")
+    ax.set_facecolor("white")
+    ax.axis("off")
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", facecolor="white", dpi=image_size / 6)
+    plt.close(fig)
+    buf.seek(0)
+    img = Image.open(buf).convert("RGB")
+    # Force the exact requested size so pixel→world math is clean.
+    img = img.resize((image_size, image_size))
+
+    transform = {
+        "world_left": world_left,
+        "world_top": world_top,  # PIL y-down starts from top
+        "world_width": world_right - world_left,
+        "world_height": world_top - world_bottom,
+        "img_size": image_size,
+    }
+    return img, transform
+
+
+def pixel_box_to_world(pixel_box, transform):
+    """Map a (left, top, right, bottom) pixel rect to world-space bbox.
+
+    `pixel_box` uses PIL/image convention (origin top-left, y-down).
+    Returns a shapely-style (minx, miny, maxx, maxy) in art coordinates.
+    """
+    left_px, top_px, right_px, bottom_px = pixel_box
+    s = transform["img_size"]
+    ww = transform["world_width"]
+    wh = transform["world_height"]
+    wl = transform["world_left"]
+    wt = transform["world_top"]
+
+    minx = wl + (left_px / s) * ww
+    maxx = wl + (right_px / s) * ww
+    # Flip Y: top pixel -> max world y, bottom pixel -> min world y.
+    maxy = wt - (top_px / s) * wh
+    miny = wt - (bottom_px / s) * wh
+    return (minx, miny, maxx, maxy)
 
 
 def render_preview(art, crop_bbox=None, size_inches=1.0) -> plt.Figure:
@@ -146,23 +218,18 @@ with st.sidebar:
     size_inches = st.selectbox("Disc size", [1, 2, 3], index=0, format_func=lambda v: f'{v}"')
 
     st.subheader("Crop")
-    enable_crop = st.checkbox("Enable crop", value=False, help="Trim the SVG art's bounding box before it lands on the token.")
-
-    if enable_crop:
-        pad_x = width * 0.05
-        pad_y = height * 0.05
-        left = st.slider("Left", float(minx - pad_x), float(maxx), float(minx), step=width / 200)
-        right = st.slider("Right", float(minx), float(maxx + pad_x), float(maxx), step=width / 200)
-        bottom = st.slider("Bottom", float(miny - pad_y), float(maxy), float(miny), step=height / 200)
-        top = st.slider("Top", float(miny), float(maxy + pad_y), float(maxy), step=height / 200)
-
-        if right <= left or top <= bottom:
-            st.warning("Crop rectangle is empty — adjust the sliders.")
-            crop_bbox = None
-        else:
-            crop_bbox = (left, bottom, right, top)
-    else:
-        crop_bbox = None
+    enable_crop = st.checkbox(
+        "Enable crop",
+        value=False,
+        help="Drag a box on the image to crop the SVG art before it lands on the token.",
+    )
+    crop_aspect = st.selectbox(
+        "Crop aspect ratio",
+        ["Free", "1:1 (square)", "Match disc (1:1)"],
+        index=1,
+        disabled=not enable_crop,
+    )
+    crop_color = st.color_picker("Crop box color", "#FF0000", disabled=not enable_crop)
 
     st.subheader("Advanced")
     with st.expander("Dimensions (mm)"):
@@ -171,7 +238,31 @@ with st.sidebar:
         border_frac = st.slider("Border width (fraction of radius)", 0.0, 0.2, DEFAULT_BORDER_FRAC, 0.005)
         art_margin_frac = st.slider("Art margin (fraction of radius)", 0.0, 0.2, DEFAULT_ART_MARGIN_FRAC, 0.005)
 
-# --- Preview ---
+# --- Interactive crop ---
+crop_bbox = None
+if enable_crop:
+    st.subheader("Drag a crop box on the art")
+    art_image, transform = render_art_to_image(art, image_size=600)
+    aspect_ratio = None
+    if crop_aspect.startswith("1:1") or crop_aspect.startswith("Match"):
+        aspect_ratio = (1, 1)
+
+    pixel_box = st_cropper(
+        art_image,
+        realtime_update=True,
+        box_color=crop_color,
+        aspect_ratio=aspect_ratio,
+        return_type="box",
+        key="svg_cropper",
+    )
+    # streamlit-cropper returns {"left", "top", "width", "height"} in pixels.
+    left = pixel_box["left"]
+    top = pixel_box["top"]
+    right = left + pixel_box["width"]
+    bottom = top + pixel_box["height"]
+    crop_bbox = pixel_box_to_world((left, top, right, bottom), transform)
+
+# --- Crop apply + token preview ---
 preview_art = art
 if crop_bbox is not None:
     preview_art = art.intersection(box(*crop_bbox))
@@ -179,6 +270,7 @@ if crop_bbox is not None:
         st.error("Crop removes all geometry — widen the crop window.")
         st.stop()
 
+st.subheader("Token preview")
 fig = render_preview(art, crop_bbox=crop_bbox, size_inches=size_inches)
 st.pyplot(fig)
 
@@ -221,3 +313,8 @@ if generate:
         mime="model/stl",
         use_container_width=True,
     )
+
+st.divider()
+if st.button("🔄 Start over", use_container_width=True):
+    st.session_state.clear()
+    st.rerun()

@@ -3,7 +3,7 @@ name = "svg-to-token-stl"
 version = "0.1.0"
 description = "Convert a single-color SVG into a bordered circular token STL."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "svgelements>=1.9",
     "shapely>=2.0",
@@ -14,6 +14,8 @@ dependencies = [
     "scipy>=1.11",
     "streamlit>=1.33",
     "matplotlib>=3.8",
+    "streamlit-cropper>=0.3",
+    "pillow>=10.0",
 ]
 
 [project.scripts]
