@@ -127,7 +127,13 @@ def pixel_box_to_world(pixel_box, transform):
     return (minx, miny, maxx, maxy)
 
 
-def render_preview(art, crop_bbox=None, size_inches=1.0) -> plt.Figure:
+def render_preview(
+    art,
+    crop_bbox=None,
+    size_inches=1.0,
+    border_frac: float = DEFAULT_BORDER_FRAC,
+    art_margin_frac: float = DEFAULT_ART_MARGIN_FRAC,
+) -> plt.Figure:
     """Render the art + crop rectangle + final disc preview."""
     fig, (ax_src, ax_token) = plt.subplots(1, 2, figsize=(10, 5))
 
@@ -154,9 +160,9 @@ def render_preview(art, crop_bbox=None, size_inches=1.0) -> plt.Figure:
     ax_token.set_title(f'Token preview ({size_inches}" disc)')
     target_diameter_mm = size_inches * MM_PER_INCH
     disc_radius = target_diameter_mm / 2.0
-    border_width = disc_radius * DEFAULT_BORDER_FRAC
-    art_margin = disc_radius * DEFAULT_ART_MARGIN_FRAC
-    inner_safe = disc_radius - border_width - art_margin
+    border_width = disc_radius * border_frac
+    art_margin = disc_radius * art_margin_frac
+    inner_safe = max(disc_radius - border_width - art_margin, 1e-6)
 
     # Disc outline.
     ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="white", edgecolor="black", linewidth=1))
@@ -271,7 +277,13 @@ if crop_bbox is not None:
         st.stop()
 
 st.subheader("Token preview")
-fig = render_preview(art, crop_bbox=crop_bbox, size_inches=size_inches)
+fig = render_preview(
+    art,
+    crop_bbox=crop_bbox,
+    size_inches=size_inches,
+    border_frac=border_frac,
+    art_margin_frac=art_margin_frac,
+)
 st.pyplot(fig)
 
 # --- Generate ---
