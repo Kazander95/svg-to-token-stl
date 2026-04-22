@@ -243,7 +243,13 @@ def render_preview(
 # UI
 # ---------------------------------------------------------------------------
 
-uploaded = st.file_uploader("Upload SVG", type=["svg"])
+# Bump this key on "Start over" to force the file_uploader (and any other
+# keyed widgets) to remount fresh.
+if "reset_nonce" not in st.session_state:
+    st.session_state["reset_nonce"] = 0
+_nonce = st.session_state["reset_nonce"]
+
+uploaded = st.file_uploader("Upload SVG", type=["svg"], key=f"uploader_{_nonce}")
 
 if uploaded is None:
     st.info("⬆️ Upload a single-color SVG to begin.")
@@ -361,7 +367,7 @@ if enable_crop:
         box_color=crop_color,
         aspect_ratio=aspect_ratio,
         return_type="box",
-        key="svg_cropper",
+        key=f"svg_cropper_{_nonce}",
     )
     # streamlit-cropper returns {"left", "top", "width", "height"} in pixels.
     left = pixel_box["left"]
@@ -442,5 +448,8 @@ if generate:
 
 st.divider()
 if st.button("🔄 Start over", use_container_width=True):
+    # Clear everything (including keyed widget state), then bump the nonce so
+    # the file_uploader / cropper remount with fresh empty state.
     st.session_state.clear()
+    st.session_state["reset_nonce"] = _nonce + 1
     st.rerun()
