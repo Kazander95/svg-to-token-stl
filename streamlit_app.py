@@ -253,6 +253,12 @@ uploaded = st.file_uploader("Upload SVG", type=["svg"], key=f"uploader_{_nonce}"
 
 if uploaded is None:
     st.info("⬆️ Upload a single-color SVG to begin.")
+    with st.expander("ℹ️ About this app", expanded=False):
+        readme_path = Path(__file__).resolve().parent / "README.md"
+        try:
+            st.markdown(readme_path.read_text(encoding="utf-8"))
+        except Exception:
+            st.caption("README not found.")
     st.stop()
 
 # Persist to a temp file because svgelements wants a path.
