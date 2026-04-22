@@ -9,8 +9,18 @@ Run with:  uv run streamlit run streamlit_app.py
 from __future__ import annotations
 
 import io
+import sys
 import tempfile
 from pathlib import Path
+
+# Ensure this script's directory is searched before any site-packages copy of
+# `main` (Streamlit Cloud can leave a stale installed `main` module around when
+# the project has been installed from pyproject.toml in a previous deploy).
+_APP_DIR = str(Path(__file__).resolve().parent)
+if _APP_DIR in sys.path:
+    sys.path.remove(_APP_DIR)
+sys.path.insert(0, _APP_DIR)
+sys.modules.pop("main", None)
 
 import matplotlib.pyplot as plt
 import streamlit as st
