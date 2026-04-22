@@ -25,7 +25,14 @@ from main import (
     DEFAULT_BASE_THICKNESS_MM,
     DEFAULT_BORDER_FRAC,
     DEFAULT_RELIEF_HEIGHT_MM,
+    DEFAULT_TEXT_HEIGHT_FRAC,
+    DEFAULT_TEXT_MAX_WIDTH_FRAC,
+    DEFAULT_TEXT_PADDING_FRAC,
+    DEFAULT_TEXT_TAPER_FRAC,
     MM_PER_INCH,
+    _build_tapered_plaque,
+    _curve_to_arc,
+    build_text_polygon,
     build_token_from_art,
     load_svg_as_polygon,
 )
@@ -133,6 +140,12 @@ def render_preview(
     size_inches=1.0,
     border_frac: float = DEFAULT_BORDER_FRAC,
     art_margin_frac: float = DEFAULT_ART_MARGIN_FRAC,
+    text: str | None = None,
+    text_position: str = "bottom",
+    text_height_frac: float = DEFAULT_TEXT_HEIGHT_FRAC,
+    text_padding_frac: float = DEFAULT_TEXT_PADDING_FRAC,
+    text_max_width_frac: float = DEFAULT_TEXT_MAX_WIDTH_FRAC,
+    text_taper_frac: float = DEFAULT_TEXT_TAPER_FRAC,
 ) -> plt.Figure:
     """Render the art + crop rectangle + final disc preview."""
     fig, (ax_src, ax_token) = plt.subplots(1, 2, figsize=(10, 5))
@@ -156,7 +169,7 @@ def render_preview(
     ax_src.set_aspect("equal")
     ax_src.autoscale()
 
-    # --- right: token preview (disc + border ring + cropped art fit inside) ---
+    # --- right: token preview (computed in the same way as the STL build) ---
     ax_token.set_title(f'Token preview ({size_inches}" disc)')
     target_diameter_mm = size_inches * MM_PER_INCH
     disc_radius = target_diameter_mm / 2.0
@@ -164,11 +177,43 @@ def render_preview(
     art_margin = disc_radius * art_margin_frac
     inner_safe = max(disc_radius - border_width - art_margin, 1e-6)
 
-    # Outer black disc (draws the filled border ring when the inner white disc
-    # is drawn on top).
-    ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="black", edgecolor="black", linewidth=1))
-    # Inner white face (covers the center, leaving the annular border black).
-    ax_token.add_patch(Circle((0, 0), disc_radius - border_width, facecolor="white", edgecolor="black", linewidth=0.5))
+    # Build the same border geometry the mesh will use, incl. text break.
+    from shapely.geometry import Point as _P  # local alias to avoid top-level changes
+    disc = _P(0, 0).buffer(disc_radius, quad_segs=128)
+    border_geom = disc.difference(_P(0, 0).buffer(disc_radius - border_width, quad_segs=128))
+
+    text_geom = None
+    if text and text.strip():
+        text_geom = build_text_polygon(
+            text,
+            target_height=border_width * text_height_frac,
+            max_width=target_diameter_mm * text_max_width_frac,
+        )
+        if text_geom is not None and not text_geom.is_empty:
+            tminx, tminy, tmaxx, tmaxy = text_geom.bounds
+            half_w_flat = (tmaxx - tminx) / 2.0
+            pad = border_width * text_padding_frac
+            taper_len = border_width * text_taper_frac
+            R_mid = disc_radius - border_width / 2.0
+
+            plaque_flat = _build_tapered_plaque(
+                half_w_flat + pad, border_width, pad, taper_len,
+            )
+            plaque_curved = _curve_to_arc(plaque_flat, R_mid, position=text_position,
+                                          tolerance=max(border_width / 15.0, 0.1))
+            text_geom = _curve_to_arc(text_geom, R_mid, position=text_position,
+                                      tolerance=max(border_width / 20.0, 0.08))
+            text_geom = text_geom.intersection(disc)
+            if not text_geom.is_empty:
+                border_geom = border_geom.difference(plaque_curved)
+
+    # White base disc.
+    ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="white", edgecolor="black", linewidth=1))
+    # Black border (with text break carved out if present).
+    _plot_polygon(ax_token, border_geom, color="black", zorder=2)
+    # Raised text.
+    if text_geom is not None and not text_geom.is_empty:
+        _plot_polygon(ax_token, text_geom, color="black", zorder=3)
 
     # Fit cropped art into the safe inner area and plot it.
     cropped = art
@@ -181,7 +226,7 @@ def render_preview(
         half_w, half_h = (maxx - minx) / 2, (maxy - miny) / 2
         current_r = max((half_w ** 2 + half_h ** 2) ** 0.5, 1e-9)
         fit = affinity.scale(centered, xfact=inner_safe / current_r, yfact=inner_safe / current_r, origin=(0, 0))
-        _plot_polygon(ax_token, fit, color="black", zorder=2)
+        _plot_polygon(ax_token, fit, color="black", zorder=3)
 
     lim = disc_radius * 1.1
     ax_token.set_xlim(-lim, lim)
@@ -237,11 +282,42 @@ with st.sidebar:
     )
     crop_color = st.color_picker("Crop box color", "#FF0000", disabled=not enable_crop)
 
+    st.subheader("Text label")
+    text_value = st.text_input(
+        "Label text",
+        value="",
+        help="Optional. Breaks through the border ring as a raised nameplate.",
+        max_chars=40,
+    )
+    text_position = st.radio(
+        "Position",
+        ["bottom", "top"],
+        index=0,
+        horizontal=True,
+        disabled=not text_value.strip(),
+    )
+    text_height_frac = st.slider(
+        "Text height (fraction of border width)",
+        0.3, 1.0, DEFAULT_TEXT_HEIGHT_FRAC, 0.05,
+        disabled=not text_value.strip(),
+    )
+    text_padding_frac = st.slider(
+        "Border clearance around text (fraction of border width)",
+        0.0, 1.0, DEFAULT_TEXT_PADDING_FRAC, 0.05,
+        disabled=not text_value.strip(),
+    )
+    text_taper_frac = st.slider(
+        "Border taper length (multiple of border width)",
+        0.0, 4.0, DEFAULT_TEXT_TAPER_FRAC, 0.1,
+        help="How far the border narrows to a point on each side of the text.",
+        disabled=not text_value.strip(),
+    )
+
     st.subheader("Advanced")
     with st.expander("Dimensions (mm)"):
         base_thickness = st.number_input("Base thickness", 0.4, 10.0, DEFAULT_BASE_THICKNESS_MM, 0.1)
         relief_height = st.number_input("Relief height", 0.2, 5.0, DEFAULT_RELIEF_HEIGHT_MM, 0.1)
-        border_frac = st.slider("Border width (fraction of radius)", 0.0, 0.2, DEFAULT_BORDER_FRAC, 0.005)
+        border_frac = st.slider("Border width (fraction of radius)", 0.0, 0.3, DEFAULT_BORDER_FRAC, 0.005)
         art_margin_frac = st.slider("Art margin (fraction of radius)", 0.0, 0.2, DEFAULT_ART_MARGIN_FRAC, 0.005)
 
 # --- Interactive crop ---
@@ -283,6 +359,11 @@ fig = render_preview(
     size_inches=size_inches,
     border_frac=border_frac,
     art_margin_frac=art_margin_frac,
+    text=text_value,
+    text_position=text_position,
+    text_height_frac=text_height_frac,
+    text_padding_frac=text_padding_frac,
+    text_taper_frac=text_taper_frac,
 )
 st.pyplot(fig)
 
@@ -301,6 +382,11 @@ if generate:
                 relief_height=relief_height,
                 border_frac=border_frac,
                 art_margin_frac=art_margin_frac,
+                text=text_value,
+                text_position=text_position,
+                text_height_frac=text_height_frac,
+                text_padding_frac=text_padding_frac,
+                text_taper_frac=text_taper_frac,
             )
         except Exception as exc:
             st.error(f"Failed to build mesh: {exc}")
