@@ -336,6 +336,7 @@ def build_token_from_art(
     relief_height: float = DEFAULT_RELIEF_HEIGHT_MM,
     border_frac: float = DEFAULT_BORDER_FRAC,
     art_margin_frac: float = DEFAULT_ART_MARGIN_FRAC,
+    include_border: bool = True,
     text: Optional[str] = None,
     text_position: str = "bottom",
     text_height_frac: float = DEFAULT_TEXT_HEIGHT_FRAC,
@@ -360,6 +361,12 @@ def build_token_from_art(
     art_margin = disc_radius * art_margin_frac
 
     base, border, art = build_layers(art_geom, disc_radius, border_width, art_margin)
+
+    # When the border is disabled, we still keep `border_width` reserved as the
+    # outer ring for text/layout; we just don't extrude the ring itself.
+    if not include_border:
+        from shapely.geometry import Polygon as _EmptyPoly
+        border = _EmptyPoly()
 
     text_geom = None
     if text and text.strip():
@@ -390,13 +397,14 @@ def build_token_from_art(
                                       tolerance=max(border_width / 20.0, 0.08))
 
             # Clip text to the disc just in case, and carve the plaque out of
-            # the border ring so the border tapers into a point at each side
-            # of the text.
+            # the border ring (if present) so the border tapers into a point
+            # on each side of the text.
             text_geom = text_geom.intersection(base)
             if not text_geom.is_empty:
-                border = border.difference(plaque_curved)
-                if not border.is_valid:
-                    border = border.buffer(0)
+                if include_border and not border.is_empty:
+                    border = border.difference(plaque_curved)
+                    if not border.is_valid:
+                        border = border.buffer(0)
             else:
                 text_geom = None
 

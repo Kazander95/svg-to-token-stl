@@ -140,6 +140,7 @@ def render_preview(
     size_inches=1.0,
     border_frac: float = DEFAULT_BORDER_FRAC,
     art_margin_frac: float = DEFAULT_ART_MARGIN_FRAC,
+    include_border: bool = True,
     text: str | None = None,
     text_position: str = "bottom",
     text_height_frac: float = DEFAULT_TEXT_HEIGHT_FRAC,
@@ -204,13 +205,14 @@ def render_preview(
             text_geom = _curve_to_arc(text_geom, R_mid, position=text_position,
                                       tolerance=max(border_width / 20.0, 0.08))
             text_geom = text_geom.intersection(disc)
-            if not text_geom.is_empty:
+            if not text_geom.is_empty and include_border:
                 border_geom = border_geom.difference(plaque_curved)
 
     # White base disc.
     ax_token.add_patch(Circle((0, 0), disc_radius, facecolor="white", edgecolor="black", linewidth=1))
-    # Black border (with text break carved out if present).
-    _plot_polygon(ax_token, border_geom, color="black", zorder=2)
+    # Black border (with text break carved out if present) — only when enabled.
+    if include_border:
+        _plot_polygon(ax_token, border_geom, color="black", zorder=2)
     # Raised text.
     if text_geom is not None and not text_geom.is_empty:
         _plot_polygon(ax_token, text_geom, color="black", zorder=3)
@@ -282,43 +284,67 @@ with st.sidebar:
     )
     crop_color = st.color_picker("Crop box color", "#FF0000", disabled=not enable_crop)
 
+    st.subheader("Border")
+    enable_border = st.checkbox(
+        "Enable border",
+        value=True,
+        help="Uncheck for a plain disc with just the art (no raised border ring). "
+             "Text labels still work — they'll sit in the outer ring area.",
+    )
+
     st.subheader("Text label")
     text_value = st.text_input(
         "Label text",
         value="",
-        help="Optional. Breaks through the border ring as a raised nameplate.",
+        help="Optional. Raised label in the outer ring. When the border is on, "
+             "the border narrows to a point on each side of the text.",
         max_chars=40,
     )
+    text_disabled = not text_value.strip()
     text_position = st.radio(
         "Position",
         ["bottom", "top"],
         index=0,
         horizontal=True,
-        disabled=not text_value.strip(),
+        disabled=text_disabled,
     )
     text_height_frac = st.slider(
         "Text height (fraction of border width)",
         0.3, 1.0, DEFAULT_TEXT_HEIGHT_FRAC, 0.05,
-        disabled=not text_value.strip(),
+        disabled=text_disabled,
     )
     text_padding_frac = st.slider(
         "Border clearance around text (fraction of border width)",
         0.0, 1.0, DEFAULT_TEXT_PADDING_FRAC, 0.05,
-        disabled=not text_value.strip(),
+        disabled=text_disabled,
     )
     text_taper_frac = st.slider(
         "Border taper length (multiple of border width)",
         0.0, 4.0, DEFAULT_TEXT_TAPER_FRAC, 0.1,
-        help="How far the border narrows to a point on each side of the text.",
-        disabled=not text_value.strip(),
+        help="How far the border narrows to a point on each side of the text. "
+             "Only visible when the border is enabled.",
+        disabled=text_disabled or not enable_border,
     )
+
+    st.subheader("Layout")
+    border_frac = st.slider(
+        "Border width (fraction of radius)",
+        0.0, 0.3, DEFAULT_BORDER_FRAC, 0.005,
+        help="Controls the outer ring width. Even with the border disabled, "
+             "this reserves outer-ring space and scales the text height.",
+    )
+    st.caption("ℹ️ Also controls text size — text height scales with the border width.")
+    art_margin_frac = st.slider("Art margin (fraction of radius)", 0.0, 0.2, DEFAULT_ART_MARGIN_FRAC, 0.005)
 
     st.subheader("Advanced")
     with st.expander("Dimensions (mm)"):
         base_thickness = st.number_input("Base thickness", 0.4, 10.0, DEFAULT_BASE_THICKNESS_MM, 0.1)
         relief_height = st.number_input("Relief height", 0.2, 5.0, DEFAULT_RELIEF_HEIGHT_MM, 0.1)
-        border_frac = st.slider("Border width (fraction of radius)", 0.0, 0.3, DEFAULT_BORDER_FRAC, 0.005)
-        art_margin_frac = st.slider("Art margin (fraction of radius)", 0.0, 0.2, DEFAULT_ART_MARGIN_FRAC, 0.005)
+
+# We keep `border_frac` as-is for layout (it reserves the outer ring for the
+# text even when the border is disabled). `include_border` controls whether
+# the ring is actually extruded.
+effective_text = text_value
 
 # --- Interactive crop ---
 crop_bbox = None
@@ -359,7 +385,8 @@ fig = render_preview(
     size_inches=size_inches,
     border_frac=border_frac,
     art_margin_frac=art_margin_frac,
-    text=text_value,
+    include_border=enable_border,
+    text=effective_text,
     text_position=text_position,
     text_height_frac=text_height_frac,
     text_padding_frac=text_padding_frac,
@@ -382,7 +409,8 @@ if generate:
                 relief_height=relief_height,
                 border_frac=border_frac,
                 art_margin_frac=art_margin_frac,
-                text=text_value,
+                include_border=enable_border,
+                text=effective_text,
                 text_position=text_position,
                 text_height_frac=text_height_frac,
                 text_padding_frac=text_padding_frac,
